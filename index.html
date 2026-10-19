@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KopiKita v3</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<style>body{margin:0;background:#fafaf9}#map{height:220px;border-radius:12px}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useEffect,useRef}=React;
+/* ===== ISI DI SINI ===== */
+const SUPABASE_URL="https://ykpywnjakthiybfiypjt.supabase.co";
+const SUPABASE_KEY="sb_publishable_63kf6dpVYaa5eBXHlpIX7w_JJjpRzKc";
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+
+const rp=n=>"Rp"+Number(n||0).toLocaleString("id-ID");
+const km=(a,b,c,d)=>{const r=x=>x*Math.PI/180;return 2*6371*Math.asin(Math.sqrt(Math.sin(r(c-a)/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(r(d-b)/2)**2))};
+const ST={pending_payment:"Menunggu bayar",received:"Diterima",preparing:"Diproses",ready:"Siap",on_delivery:"Diantar",completed:"Selesai",cancelled:"Dibatalkan",expired:"Kedaluwarsa"};
+const FLOW=["received","preparing","ready","completed"];
+const MODES=[["pickup","Pickup"],["delivery","Delivery"],["dine_in","Dine-in"]];
+const MOCK_O=[{id:"m1",name:"KopiKita Sudirman",address:"Jakarta",lat:-6.2088,lng:106.823,delivery_radius_km:5}];
+const MOCK_P=[{id:"m1",name:"Kopi Susu Gula Aren",price:22000,emoji:"🧋",category:"Kopi",customizable:true},{id:"m2",name:"Americano",price:18000,emoji:"☕",category:"Kopi",customizable:true},{id:"m3",name:"Matcha Latte",price:27000,emoji:"🍵",category:"Non-Kopi",customizable:true},{id:"m4",name:"Croissant",price:20000,emoji:"🥐",category:"Makanan",customizable:false}];
+
+const Sheet=({open,onClose,title,children})=>!open?null:(
+<div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={onClose}>
+<div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-t-3xl bg-white p-5 pb-8" onClick={e=>e.stopPropagation()}>
+<div className="mb-3 flex justify-between"><h2 className="text-lg font-bold">{title}</h2><button onClick={onClose} className="px-2 text-xl">✕</button></div>{children}</div></div>);
+const Chips=({o,v,f})=><div className="flex flex-wrap gap-2">{o.map(x=><button key={x} onClick={()=>f(x)} className={`rounded-full border px-4 py-1.5 text-sm ${v===x?"border-amber-800 bg-amber-800 text-white":"border-stone-300"}`}>{x}</button>)}</div>;
+const inp="w-full rounded-xl border border-stone-300 px-4 py-3 text-sm outline-none focus:border-amber-800";
+
+function MapPick({outlet,pos,setPos}){
+  const ref=useRef(null);
+  useEffect(()=>{
+    if(!window.L||!ref.current)return;
+    const start=pos||{lat:outlet.lat,lng:outlet.lng};
+    const m=L.map(ref.current).setView([start.lat,start.lng],14);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OpenStreetMap"}).addTo(m);
+    L.marker([outlet.lat,outlet.lng]).addTo(m).bindPopup(outlet.name);
+    const pin=L.marker([start.lat,start.lng],{draggable:true}).addTo(m);
+    pin.on("dragend",()=>{const p=pin.getLatLng();setPos({lat:p.lat,lng:p.lng})});
+    m.on("click",e=>{pin.setLatLng(e.latlng);setPos({lat:e.latlng.lat,lng:e.latlng.lng})});
+    setTimeout(()=>m.invalidateSize(),200);
+    return()=>m.remove();
+  },[outlet.id]);
+  return <div id="map" ref={ref}></div>;
+}
+
+function Variant({p,onClose,onAdd}){
+  const [t,setT]=useState("Hot"),[s,setS]=useState("Regular"),[g,setG]=useState("Normal"),[i,setI]=useState("Normal"),[m,setM]=useState(false),[q,setQ]=useState(1);
+  useEffect(()=>{setT("Hot");setS("Regular");setG("Normal");setI("Normal");setM(false);setQ(1)},[p]);
+  if(!p)return null;
+  const unit=p.price+(s==="Large"?4000:0)+(m?4000:0);
+  const options={temp:t,size:s,sugar:g,ice:t==="Iced"?i:null,extra_milk:m?"true":"false"};
+  const label=[t,s,"Gula "+g,t==="Iced"?"Es "+i:null,m?"Extra susu":null].filter(Boolean).join(", ");
+  return <Sheet open onClose={onClose} title={p.name}><div className="space-y-4">
+    <div><div className="mb-1 text-sm font-semibold">Suhu</div><Chips o={["Hot","Iced"]} v={t} f={setT}/></div>
+    <div><div className="mb-1 text-sm font-semibold">Ukuran (+Rp4.000 Large)</div><Chips o={["Regular","Large"]} v={s} f={setS}/></div>
+    <div><div className="mb-1 text-sm font-semibold">Gula</div><Chips o={["Normal","Less","No"]} v={g} f={setG}/></div>
+    {t==="Iced"&&<div><div className="mb-1 text-sm font-semibold">Es</div><Chips o={["Normal","Less","No"]} v={i} f={setI}/></div>}
+    <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={m} onChange={e=>setM(e.target.checked)}/>Extra susu (+Rp4.000)</label>
+    <div className="flex items-center justify-between"><div className="flex items-center gap-3"><button onClick={()=>setQ(Math.max(1,q-1))} className="h-9 w-9 rounded-full bg-stone-100">−</button><b>{q}</b><button onClick={()=>setQ(q+1)} className="h-9 w-9 rounded-full bg-stone-100">+</button></div>
+    <button onClick={()=>onAdd({key:p.id+label,product_id:p.id,name:p.name,unit,qty:q,options,label})} className="rounded-2xl bg-amber-800 px-6 py-3 font-semibold text-white">Tambah · {rp(unit*q)}</button></div></div></Sheet>;
+}
+
+function Account({user,profile,setProfile,notify,me,goOrders}){
+  const [mode,setMode]=useState("login"),[f,setF]=useState({email:"",password:"",name:""}),[busy,setBusy]=useState(false),[info,setInfo]=useState(""),[form,setForm]=useState(profile);
+  useEffect(()=>setForm(profile),[profile]);
+  async function submit(){
+    setInfo("");if(!f.email||f.password.length<6)return setInfo("Isi email dan kata sandi (min. 6 karakter).");
+    setBusy(true);
+    try{
+      if(mode==="signup"){const {data,error}=await sb.auth.signUp({email:f.email,password:f.password,options:{data:{full_name:f.name}}});if(error)throw error;notify(data.session?"Akun dibuat":"Akun dibuat. Cek email untuk verifikasi.")}
+      else{const {error}=await sb.auth.signInWithPassword({email:f.email,password:f.password});if(error)throw error;notify("Berhasil masuk")}
+    }catch(e){setInfo(e.message||"Terjadi kesalahan")}finally{setBusy(false)}
+  }
+  async function google(){try{const {error}=await sb.auth.signInWithOAuth({provider:"google",options:{redirectTo:location.origin}});if(error)throw error}catch(e){setInfo("Login Google belum diaktifkan. Pakai email & kata sandi, atau lanjut sebagai tamu.")}}
+  if(user)return <ProfileView user={user} profile={profile} setProfile={setProfile} notify={notify} me={me} goOrders={goOrders}/>;
+  if(!user)return <div className="space-y-3 p-4">
+    <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-900">Kamu menjelajah sebagai tamu. Masuk untuk memesan dan menyimpan profil.</div>
+    <div className="flex rounded-full bg-stone-100 p-1">{[["login","Masuk"],["signup","Daftar"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} className={`flex-1 rounded-full py-2 text-sm font-semibold ${mode===k?"bg-amber-800 text-white":""}`}>{l}</button>)}</div>
+    {mode==="signup"&&<input className={inp} placeholder="Nama lengkap" value={f.name} onChange={e=>setF({...f,name:e.target.value})}/>}
+    <input className={inp} type="email" placeholder="Email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
+    <input className={inp} type="password" placeholder="Kata sandi" value={f.password} onChange={e=>setF({...f,password:e.target.value})}/>
+    <button onClick={submit} disabled={busy} className="w-full rounded-xl bg-amber-800 py-3 font-semibold text-white disabled:opacity-60">{busy?"Memproses…":mode==="login"?"Masuk":"Buat akun"}</button>
+    <button onClick={google} className="w-full rounded-xl border border-stone-300 py-3 text-sm font-semibold">Login Google</button>
+    {info&&<div className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{info}</div>}</div>;
+}
+
+const fmtD=d=>d<1?Math.round(d*1000)+" M":d.toFixed(1)+" KM";
+const LV=[["Bronze",0],["Silver",200],["Gold",1000]];
+function lvl(p){let i=0;LV.forEach((l,k)=>{if(p>=l[1])i=k});const n=LV[i+1];return {name:LV[i][0],next:n&&n[0],pct:n?Math.round((p-LV[i][1])/(n[1]-LV[i][1])*100):100}}
+
+function OutletMap({outlets,me}){
+  const ref=useRef(null);
+  useEffect(()=>{
+    if(!window.L||!ref.current||!outlets.length)return;
+    const c=me||{lat:outlets[0].lat,lng:outlets[0].lng};
+    const m=L.map(ref.current).setView([c.lat,c.lng],12);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OpenStreetMap"}).addTo(m);
+    outlets.forEach(o=>L.marker([o.lat,o.lng]).addTo(m).bindPopup(o.name));
+    if(me)L.circleMarker([me.lat,me.lng],{radius:8,color:"#2563eb"}).addTo(m).bindPopup("Lokasimu");
+    setTimeout(()=>m.invalidateSize(),200);
+    return()=>m.remove();
+  },[outlets.length,me&&me.lat]);
+  return <div id="map" ref={ref}></div>;
+}
+
+function OutletPicker({open,onClose,outlets,outlet,mode,setMode,me,setMe,onPick}){
+  const [q,setQ]=useState(""),[map,setMap]=useState(false),[msg,setMsg]=useState(""),[busy,setBusy]=useState(false);
+  if(!open)return null;
+  const locate=()=>{setMsg("");if(!navigator.geolocation)return setMsg("Perangkat tidak mendukung lokasi.");setBusy(true);
+    navigator.geolocation.getCurrentPosition(p=>{setMe({lat:p.coords.latitude,lng:p.coords.longitude});setBusy(false)},()=>{setMsg("Izin lokasi ditolak. Cari outlet secara manual.");setBusy(false)},{enableHighAccuracy:true,timeout:10000})};
+  let list=outlets.map(o=>({...o,d:me?km(me.lat,me.lng,o.lat,o.lng):null}));
+  if(q.trim())list=list.filter(o=>(o.name+" "+(o.address||"")).toLowerCase().includes(q.trim().toLowerCase()));
+  list.sort((a,b)=>(a.d??0)-(b.d??0));
+  return <div className="fixed inset-0 z-50 mx-auto max-w-md overflow-y-auto bg-white">
+    <div className="sticky top-0 z-10 bg-white">
+      <div className="flex items-center gap-3 border-b px-3 py-3"><button onClick={onClose} className="px-2 text-xl">←</button>
+        <div className="flex gap-5">{MODES.map(([k,l])=><button key={k} onClick={()=>setMode(k)} className={`border-b-2 pb-1 text-sm font-bold ${mode===k?"border-amber-800 text-amber-800":"border-transparent text-stone-500"}`}>{l}</button>)}</div></div>
+      <div className="space-y-2 p-3">
+        <input className="w-full rounded-full bg-stone-100 px-4 py-3 text-sm outline-none" placeholder="🔍 Cari lokasi" value={q} onChange={e=>setQ(e.target.value)}/>
+        <div className="flex gap-2">
+          <button onClick={locate} disabled={busy} className="flex-1 rounded-xl border-2 border-amber-700 px-3 py-2.5 text-left text-sm font-semibold">📍 {busy?"Mencari lokasi…":me?"Lokasi saat ini aktif":"Gunakan lokasi saat ini"}</button>
+          <button onClick={()=>setMap(!map)} className={`rounded-xl border px-4 text-xl ${map?"bg-amber-800 text-white":""}`} aria-label="Peta">🗺</button></div>
+        {msg&&<div className="text-xs text-rose-700">{msg}</div>}
+        {mode==="delivery"&&!me&&<div className="text-xs text-stone-500">Aktifkan lokasi untuk melihat jarak dan jangkauan antar tiap outlet.</div>}
+      </div></div>
+    <div className="space-y-3 p-3">
+      {map&&<OutletMap outlets={list} me={me}/>}
+      {!list.length&&<div className="py-10 text-center text-stone-500">Tidak ada outlet yang cocok.</div>}
+      {list.map(o=><div key={o.id} className={`rounded-2xl border-2 bg-white p-4 shadow-sm ${outlet.id===o.id?"border-amber-800":"border-transparent shadow"}`}>
+        <div className="flex gap-2">{o.d!=null&&<span className="rounded bg-sky-50 px-2 py-0.5 text-xs font-bold text-sky-700">{fmtD(o.d)}</span>}{mode==="delivery"&&o.d!=null&&o.d>(o.delivery_radius_km||5)&&<span className="rounded bg-rose-50 px-2 py-0.5 text-xs font-bold text-rose-700">DI LUAR JANGKAUAN</span>}{outlet.id===o.id&&<span className="rounded bg-amber-50 px-2 py-0.5 text-xs font-bold text-amber-800">PESAN DI OUTLET</span>}</div>
+        <div className="mt-1 text-lg font-bold">{o.name}</div><div className="text-sm text-stone-500">{o.address}</div>
+        <div className="mt-3 flex items-center justify-between"><div className="flex gap-3 text-xs"><span><span className="text-green-600">●</span> Delivery</span><span><span className="text-teal-500">●</span> Pickup</span></div>
+          <button onClick={()=>onPick(o)} className="rounded-full bg-amber-800 px-4 py-1.5 text-sm font-semibold text-white">Pilih</button></div></div>)}
+    </div></div>;
+}
+
+function ProfileView({user,profile,setProfile,notify,me,goOrders}){
+  const [edit,setEdit]=useState(false),[addrOpen,setAddrOpen]=useState(false),[form,setForm]=useState(profile),[busy,setBusy]=useState(false),[addrs,setAddrs]=useState([]),[na,setNa]=useState({label:"Rumah",address:""});
+  useEffect(()=>setForm(profile),[profile]);
+  const pts=profile.points||0,L=lvl(pts);
+  const fields=["full_name","email","phone","gender","birth_date","city","address"],done=fields.filter(k=>profile[k]).length,pct=Math.round(done/fields.length*100);
+  async function save(e){e.preventDefault();setBusy(true);
+    try{const {error}=await sb.from("profiles").update({full_name:form.full_name,phone:form.phone,email:form.email,address:form.address,gender:form.gender||null,birth_date:form.birth_date||null,city:form.city||null}).eq("id",user.id);
+      if(error)throw error;setProfile({...profile,...form});setEdit(false);notify("Profil tersimpan")}
+    catch(e){notify(/column/.test(e.message)?"Jalankan SQL file 7 dulu di Supabase":e.message,"err")}finally{setBusy(false)}}
+  async function loadA(){const {data}=await sb.from("addresses").select("*").eq("user_id",user.id).order("created_at",{ascending:false});setAddrs(data||[])}
+  async function addA(){if(!na.address.trim())return notify("Isi alamat","err");const {error}=await sb.from("addresses").insert({user_id:user.id,label:na.label||"Rumah",address:na.address,lat:me?me.lat:null,lng:me?me.lng:null});if(error)return notify(error.message,"err");setNa({label:"Rumah",address:""});loadA()}
+  async function delA(id){await sb.from("addresses").delete().eq("id",id);loadA()}
+  const Row=({t,onClick,right})=><button onClick={onClick} className="flex w-full items-center justify-between border-b border-stone-100 px-4 py-3.5 text-left last:border-0"><span>{t}</span><span className="text-stone-400">{right||"›"}</span></button>;
+  return <div className="space-y-4 p-4">
+    <div className="rounded-2xl bg-white p-4 shadow">
+      <div className="flex items-start justify-between"><div><div className="text-sm text-stone-500">Hai,</div><div className="text-xl font-bold">{profile.full_name||"Pelanggan"}</div></div><button onClick={()=>setEdit(true)} className="text-sm font-semibold text-amber-800">Edit Profil ✎</button></div>
+      <div className="mt-3 grid grid-cols-2 gap-3 border-t pt-3">
+        <div><div className="text-xs font-semibold text-amber-700">Level</div><div className="text-xl font-bold">{L.name}</div>
+          <div className="mt-1 h-1.5 rounded-full bg-stone-200"><div className="h-1.5 rounded-full bg-amber-700" style={{width:L.pct+"%"}}/></div><div className="mt-0.5 text-[10px] text-stone-500">{L.next?L.pct+"% menuju "+L.next:"Level tertinggi"}</div></div>
+        <div className="text-right"><div className="text-xs font-semibold text-amber-700">KopiKita Points</div><div className="text-xl font-bold">{pts} <span className="text-sm font-normal text-stone-500">pts</span></div></div></div></div>
+    {pct<100&&<div className="flex items-center gap-3 rounded-2xl bg-amber-50 p-3"><div className="flex h-12 w-12 items-center justify-center rounded-full border-4 border-amber-700 text-xs font-bold">{pct}%</div><div className="flex-1"><div className="font-bold">Isi Profil Kamu Yuk!</div><div className="text-xs text-stone-600">Biar hubungan kita makin dekat</div></div><button onClick={()=>setEdit(true)} className="rounded-lg bg-red-700 px-3 py-2 text-sm font-semibold text-white">Lengkapi</button></div>}
+    <div><div className="mb-1 text-lg font-bold">Akun</div><div className="rounded-2xl bg-white shadow"><Row t="📍 Alamat Pengiriman" onClick={()=>{setAddrOpen(true);loadA()}}/><Row t="🧾 Riwayat Pesanan" onClick={goOrders}/><Row t="💳 Metode Pembayaran" right="Kasir · QRIS" onClick={()=>notify("Metode bayar dipilih saat checkout")}/></div></div>
+    <button onClick={()=>sb.auth.signOut()} className="w-full rounded-xl border border-stone-300 py-3 text-sm font-semibold text-rose-700">Keluar</button>
+    <Sheet open={edit} onClose={()=>setEdit(false)} title="Edit Profil"><form onSubmit={save} className="space-y-3">
+      <input className={inp} placeholder="Nama" value={form.full_name||""} onChange={e=>setForm({...form,full_name:e.target.value})}/>
+      <input className={inp} type="email" placeholder="Email" value={form.email||""} onChange={e=>setForm({...form,email:e.target.value})}/>
+      <input className={inp} inputMode="tel" placeholder="Nomor handphone" value={form.phone||""} onChange={e=>setForm({...form,phone:e.target.value})}/>
+      <div><div className="mb-1 text-sm font-semibold">Jenis Kelamin</div><Chips o={["Wanita","Pria","Rahasia"]} v={form.gender} f={x=>setForm({...form,gender:x})}/></div>
+      <div><div className="mb-1 text-sm font-semibold">Tanggal Lahir</div><input className={inp} type="date" value={form.birth_date||""} onChange={e=>setForm({...form,birth_date:e.target.value})}/></div>
+      <input className={inp} placeholder="Kota tempat tinggal" value={form.city||""} onChange={e=>setForm({...form,city:e.target.value})}/>
+      <textarea className={inp} rows={2} placeholder="Alamat" value={form.address||""} onChange={e=>setForm({...form,address:e.target.value})}/>
+      <button disabled={busy} className="w-full rounded-xl bg-red-700 py-3 font-semibold text-white">{busy?"Menyimpan…":"Simpan Profil"}</button></form></Sheet>
+    <Sheet open={addrOpen} onClose={()=>setAddrOpen(false)} title="Alamat Pengiriman"><div className="space-y-2">
+      {addrs.map(a=><div key={a.id} className="flex items-start justify-between rounded-xl border p-3"><div><b className="text-sm">{a.label}</b><div className="text-sm text-stone-600">{a.address}</div></div><button onClick={()=>delA(a.id)} className="text-xs text-rose-700">Hapus</button></div>)}
+      {!addrs.length&&<div className="text-sm text-stone-500">Belum ada alamat tersimpan.</div>}
+      <div className="space-y-2 border-t pt-3"><input className={inp} placeholder="Label (Rumah, Kantor)" value={na.label} onChange={e=>setNa({...na,label:e.target.value})}/><textarea className={inp} rows={2} placeholder="Alamat lengkap" value={na.address} onChange={e=>setNa({...na,address:e.target.value})}/>
+      <button onClick={addA} className="w-full rounded-xl bg-amber-800 py-3 font-semibold text-white">Simpan alamat{me?" (+ lokasi saat ini)":""}</button></div></div></Sheet>
+  </div>;
+}
+
+function App(){
+  const [tab,setTab]=useState("home"),[mode,setMode]=useState("pickup"),[outlets,setOutlets]=useState(MOCK_O),[outlet,setOutlet]=useState(MOCK_O[0]),[products,setProducts]=useState(MOCK_P),[banners,setBanners]=useState([{title:"Selamat datang",subtitle:"Pesan kopi favoritmu",emoji:"☕"}]);
+  const [cat,setCat]=useState("Kopi"),[sel,setSel]=useState(null),[cart,setCart]=useState([]),[showCart,setShowCart]=useState(false),[showOutlet,setShowOutlet]=useState(false),[bn,setBn]=useState(0);
+  const [user,setUser]=useState(null),[profile,setProfile]=useState({}),[orders,setOrders]=useState([]),[toast,setToast]=useState(null);
+  const [table,setTable]=useState(""),[addr,setAddr]=useState(""),[pos,setPos]=useState(null),[promo,setPromo]=useState(""),[method,setMethod]=useState("cash"),[busy,setBusy]=useState(false);
+  const [me,setMe]=useState(null);
+  const notify=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),3500)};
+
+  useEffect(()=>{(async()=>{
+    try{
+      const {data:o}=await sb.from("outlets").select("*").eq("is_active",true);if(o?.length){setOutlets(o);setOutlet(o[0])}
+      const {data:p}=await sb.from("products").select("*, categories(name)").eq("is_active",true);if(p?.length)setProducts(p.map(x=>({...x,category:x.categories?.name||"Kopi"})));
+      const {data:b}=await sb.from("banners").select("*").eq("is_active",true).order("sort_order");if(b?.length)setBanners(b);
+    }catch(e){}})()},[]);
+  useEffect(()=>{const t=setInterval(()=>setBn(x=>x+1),4000);return()=>clearInterval(t)},[]);
+  useEffect(()=>{
+    sb.auth.getSession().then(({data})=>setUser(data.session?.user||null));
+    const {data}=sb.auth.onAuthStateChange((_e,s)=>setUser(s?.user||null));
+    return()=>data.subscription.unsubscribe();
+  },[]);
+  async function loadOrders(uid){const {data}=await sb.from("orders").select("*, order_items(name,qty,options), outlets(name)").eq("user_id",uid).order("created_at",{ascending:false});if(data)setOrders(data)}
+  useEffect(()=>{
+    if(!user){setProfile({});setOrders([]);return}
+    sb.from("profiles").select("*").eq("id",user.id).maybeSingle().then(({data})=>setProfile(data||{email:user.email}));
+    loadOrders(user.id);
+    const ch=sb.channel("o-"+user.id).on("postgres_changes",{event:"*",schema:"public",table:"orders",filter:`user_id=eq.${user.id}`},()=>loadOrders(user.id)).subscribe();
+    return()=>{sb.removeChannel(ch)};
+  },[user?.id]);
+
+  const sortedOutlets=outlets.map(o=>({...o,d:me?km(me.lat,me.lng,o.lat,o.lng):null})).sort((a,b)=>(a.d??0)-(b.d??0));
+  const cats=["Promo","Kopi","Non-Kopi","Makanan"];
+  const list=cat==="Promo"?products.filter(p=>p.is_promo):products.filter(p=>p.category===cat&&!p.is_promo);
+  const count=cart.reduce((a,c)=>a+c.qty,0),sub=cart.reduce((a,c)=>a+c.unit*c.qty,0);
+  const dist=mode==="delivery"&&pos?km(outlet.lat,outlet.lng,pos.lat,pos.lng):null;
+  const fee=dist==null?0:5000+2000*Math.ceil(Math.max(dist-2,0));
+  const add=i=>{setCart(c=>{const k=c.find(x=>x.key===i.key);return k?c.map(x=>x.key===i.key?{...x,qty:x.qty+i.qty}:x):[...c,i]});setSel(null);notify(i.name+" masuk keranjang")};
+  const card=p=><button key={p.id} onClick={()=>p.customizable===false?add({key:p.id,product_id:p.id,name:p.name,unit:p.price,qty:1,options:{},label:""}):setSel(p)} className="rounded-2xl border border-stone-200 bg-white p-3 text-left">
+    <div className="mb-2 flex h-20 items-center justify-center rounded-xl bg-amber-50 text-4xl">{p.emoji||"☕"}</div>
+    <div className="min-h-[2.5rem] text-sm font-semibold">{p.name}</div>
+    <div className="mt-1 flex items-end justify-between"><div>{p.old_price&&<div className="text-xs text-stone-400 line-through">{rp(p.old_price)}</div>}<div className="text-sm font-bold text-amber-800">{rp(p.price)}</div></div><span className="rounded-full bg-amber-800 px-2 text-white">+</span></div></button>;
+
+  async function pay(){
+    if(!user){notify("Masuk dulu di tab Akun","err");setShowCart(false);setTab("account");return}
+    if(mode==="dine_in"&&!table)return notify("Pilih nomor meja","err");
+    if(mode==="delivery"&&(!pos||!addr.trim()))return notify("Isi alamat dan tandai titik antar di peta","err");
+    setBusy(true);
+    try{
+      const {data:id,error}=await sb.rpc("create_order",{p_outlet_id:outlet.id,p_order_type:mode,p_items:cart.map(c=>({product_id:c.product_id,qty:c.qty,options:c.options})),p_table_no:mode==="dine_in"?table:null,p_address:mode==="delivery"?addr:null,p_lat:mode==="delivery"?pos.lat:null,p_lng:mode==="delivery"?pos.lng:null,p_phone:profile.phone||null,p_notes:null,p_promo_code:promo||null});
+      if(error)throw error;
+      const {error:e2}=await sb.rpc("choose_payment",{p_order_id:id,p_method:method});if(e2)throw e2;
+      setCart([]);setShowCart(false);setPromo("");setTab("orders");loadOrders(user.id);notify("Pesanan diterima!");
+    }catch(e){notify(e.message||"Gagal membuat pesanan","err")}finally{setBusy(false)}
+  }
+
+  const Orders=()=><div className="space-y-3 p-4"><h2 className="text-lg font-bold">Pesanan kamu</h2>
+    {!user&&<div className="rounded-2xl bg-stone-100 p-6 text-center text-stone-500">Masuk untuk melihat pesananmu.</div>}
+    {user&&!orders.length&&<div className="rounded-2xl bg-stone-100 p-6 text-center text-stone-500">Belum ada pesanan.</div>}
+    {orders.map(o=>{const idx=FLOW.indexOf(o.status);return <div key={o.id} className="rounded-2xl border border-stone-200 bg-white p-4">
+      <div className="flex justify-between"><b>{o.code}</b><span className="rounded-full bg-amber-100 px-3 py-0.5 text-xs font-semibold text-amber-800">{ST[o.status]}</span></div>
+      <div className="text-xs text-stone-500">{o.outlets?.name} · {o.order_type==="dine_in"?"Dine-in meja "+o.table_no:o.order_type} · {o.payment_status==="paid"?"Lunas":"Bayar di kasir"}</div>
+      {idx>=0&&<div className="my-3 flex items-center">{FLOW.map((s,i)=><React.Fragment key={s}><div className="flex flex-col items-center"><div className={`flex h-6 w-6 items-center justify-center rounded-full text-xs text-white ${i<=idx?"bg-amber-800":"bg-stone-300"}`}>{i<=idx?"✓":""}</div><span className="mt-1 text-[10px]">{ST[s]}</span></div>{i<3&&<div className={`mb-4 h-0.5 flex-1 ${i<idx?"bg-amber-800":"bg-stone-200"}`}/>}</React.Fragment>)}</div>}
+      <div className="text-sm text-stone-700">{(o.order_items||[]).map(i=>i.qty+"× "+i.name).join(", ")}</div>
+      <div className="mt-1 flex items-center justify-between"><b className="text-sm">{rp(o.total)}</b>
+      {["pending_payment","received"].includes(o.status)&&<button onClick={async()=>{const {error}=await sb.rpc("cancel_order",{p_order_id:o.id});error?notify(error.message,"err"):loadOrders(user.id)}} className="text-xs text-rose-700">Batalkan</button>}</div></div>})}</div>;
+
+  const tabs=[["home","🏠","Beranda"],["menu","☕","Menu"],["orders","🧾","Pesanan"],["account","👤","Akun"]];
+  return <div className="mx-auto min-h-screen max-w-md bg-stone-50 text-stone-900">
+    <header className="sticky top-0 z-30 flex items-center justify-between gap-2 bg-white p-3 shadow-sm">
+      <button onClick={()=>setShowOutlet(true)} className="min-w-0 text-left"><div className="text-xs text-stone-500">📍 Outlet</div><div className="truncate text-sm font-bold">{outlet.name}</div></button>
+      <div className="flex rounded-full bg-stone-100 p-1">{MODES.map(([k,l])=><button key={k} onClick={()=>setMode(k)} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${mode===k?"bg-amber-800 text-white":"text-stone-600"}`}>{l}</button>)}</div></header>
+    <main className="pb-36">
+      {tab==="home"&&<div className="space-y-5 p-4">
+        <div className="overflow-hidden rounded-3xl"><div className="flex transition-transform duration-500" style={{transform:`translateX(-${(bn%banners.length)*100}%)`}}>{banners.map((b,i)=><div key={i} className="flex min-w-full items-center justify-between bg-gradient-to-br from-amber-700 to-amber-900 p-6 text-white"><div><div className="text-2xl font-extrabold">{b.title}</div><div className="text-sm text-white/80">{b.subtitle}</div></div><div className="text-6xl">{b.emoji}</div></div>)}</div></div>
+        <section><h2 className="mb-2 font-bold">Outlet terdekat</h2><div className="-mx-4 flex gap-3 overflow-x-auto px-4">{sortedOutlets.map(o=><button key={o.id} onClick={()=>{setOutlet(o);notify("Outlet: "+o.name)}} className={`min-w-[10rem] rounded-2xl border p-3 text-left ${outlet.id===o.id?"border-amber-800 bg-amber-50":"border-stone-200 bg-white"}`}><div className="text-sm font-semibold">{o.name}</div><div className="text-xs text-stone-500">{o.d!=null?fmtD(o.d):(o.open_hours||"")}</div></button>)}</div></section>
+        <section><h2 className="mb-2 font-bold">Menu terlaris</h2><div className="grid grid-cols-2 gap-3">{(products.filter(p=>p.is_best_seller).length?products.filter(p=>p.is_best_seller):products).slice(0,6).map(card)}</div></section></div>}
+      {tab==="menu"&&<div className="p-4"><div className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4">{cats.map(c=><button key={c} onClick={()=>setCat(c)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium ${cat===c?"bg-amber-800 text-white":"bg-stone-100"}`}>{c}</button>)}</div>
+        {list.length?<div className="grid grid-cols-2 gap-3">{list.map(card)}</div>:<div className="py-16 text-center text-stone-500">Belum ada produk.</div>}</div>}
+      {tab==="orders"&&<Orders/>}
+      {tab==="account"&&<Account user={user} profile={profile} setProfile={setProfile} notify={notify} me={me} goOrders={()=>setTab("orders")}/>}
+      <div className="py-2 text-center text-[10px] text-stone-400">KopiKita v3</div>
+    </main>
+    {count>0&&<button onClick={()=>setShowCart(true)} className="fixed bottom-20 left-1/2 z-40 flex w-[calc(100%-2rem)] max-w-[26rem] -translate-x-1/2 justify-between rounded-2xl bg-amber-800 px-4 py-3 font-semibold text-white shadow-lg"><span>🛍 {count} item</span><span>{rp(sub)}</span></button>}
+    <nav className="fixed bottom-0 left-1/2 z-40 flex w-full max-w-md -translate-x-1/2 border-t bg-white">{tabs.map(([k,i,l])=><button key={k} onClick={()=>setTab(k)} className={`flex flex-1 flex-col items-center py-2.5 text-xs ${tab===k?"font-bold text-amber-800":"text-stone-500"}`}><span className="text-xl">{i}</span>{l}</button>)}</nav>
+
+    <OutletPicker open={showOutlet} onClose={()=>setShowOutlet(false)} outlets={outlets} outlet={outlet} mode={mode} setMode={setMode} me={me} setMe={setMe} onPick={o=>{setOutlet(o);setPos(null);setShowOutlet(false);notify("Outlet: "+o.name)}}/>
+    <Variant p={sel} onClose={()=>setSel(null)} onAdd={add}/>
+    <Sheet open={showCart} onClose={()=>setShowCart(false)} title="Keranjang">
+      <div className="space-y-3">{cart.map(c=><div key={c.key} className="flex items-center justify-between gap-2"><div className="min-w-0"><div className="truncate text-sm font-semibold">{c.name}</div><div className="text-xs text-stone-500">{c.label}</div><div className="text-sm text-amber-800">{rp(c.unit*c.qty)}</div></div>
+        <div className="flex items-center gap-2"><button onClick={()=>setCart(x=>x.flatMap(i=>i.key===c.key?(i.qty>1?[{...i,qty:i.qty-1}]:[]):[i]))} className="h-8 w-8 rounded-full bg-stone-100">−</button><b>{c.qty}</b><button onClick={()=>setCart(x=>x.map(i=>i.key===c.key?{...i,qty:i.qty+1}:i))} className="h-8 w-8 rounded-full bg-stone-100">+</button></div></div>)}</div>
+      {cart.length>0&&<div className="mt-4 space-y-3 border-t pt-3">
+        <div className="text-sm font-semibold">Layanan: {MODES.find(m=>m[0]===mode)[1]} · {outlet.name}</div>
+        {mode==="dine_in"&&<select className={inp} value={table} onChange={e=>setTable(e.target.value)}><option value="">Pilih nomor meja</option>{[1,2,3,4,5,6,7,8,9,10].map(n=><option key={n} value={n}>Meja {n}</option>)}</select>}
+        {mode==="delivery"&&<div className="space-y-2"><textarea className={inp} rows={2} placeholder="Alamat lengkap" value={addr} onChange={e=>setAddr(e.target.value)}/><div className="text-xs text-stone-500">Ketuk peta atau geser pin untuk menandai titik antar.</div><MapPick outlet={outlet} pos={pos} setPos={setPos}/>{dist!=null&&<div className="text-sm">Jarak {dist.toFixed(1)} km · ongkir {rp(fee)}{dist>(outlet.delivery_radius_km||5)&&<span className="text-rose-700"> (di luar jangkauan)</span>}</div>}</div>}
+        <input className={inp} placeholder="Kode promo (opsional, mis. HEMAT10)" value={promo} onChange={e=>setPromo(e.target.value)}/>
+        <div><div className="mb-1 text-sm font-semibold">Pembayaran</div><Chips o={["Bayar di kasir","Simulasi QRIS (demo)"]} v={method==="cash"?"Bayar di kasir":"Simulasi QRIS (demo)"} f={x=>setMethod(x==="Bayar di kasir"?"cash":"qris_demo")}/></div>
+        <div className="flex justify-between font-bold"><span>Subtotal</span><span>{rp(sub)}</span></div>
+        <p className="text-xs text-stone-500">Ongkir dan diskon dihitung final oleh server.</p>
+        <button onClick={pay} disabled={busy} className="w-full rounded-2xl bg-amber-800 py-3 font-semibold text-white disabled:opacity-60">{busy?"Memproses…":"Pesan sekarang"}</button></div>}
+      {!cart.length&&<div className="py-8 text-center text-stone-500">Keranjang masih kosong.</div>}
+    </Sheet>
+    {toast&&<div className={`fixed left-1/2 top-4 z-[60] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 rounded-xl px-4 py-3 text-sm text-white shadow-lg ${toast.type==="err"?"bg-rose-700":"bg-stone-900"}`}>{toast.msg}</div>}
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
